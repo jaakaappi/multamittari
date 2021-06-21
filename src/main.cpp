@@ -13,6 +13,8 @@
 #define WET_SOIL 1265
 #define DRY_SOIL 3838
 
+#define LIGHT_PIN 39
+
 DHT dht(DHTPIN, DHTTYPE);
 WiFiClient wifiClient;
 PubSubClient mqttClient(wifiClient);
@@ -59,32 +61,34 @@ void setup_mqtt()
   }
 }
 
-void setup()
-{
-  Serial.begin(9600);
-  setup_wifi();
-  mqttClient.setServer(mqtt_server, 1883);
-  setup_mqtt();
-  dht.begin();
-}
-
 void readDht()
 {
   float h = dht.readHumidity();
   float t = dht.readTemperature();
   float f = dht.readTemperature();
 
-  if (isnan(h) || isnan(t) || isnan(f))
+  int count = 0;
+  while (count < 10)
   {
-    Serial.println(F("Failed to read from DHT sensor!"));
-    return;
-  }
 
-  Serial.print(F("Humidity: "));
-  Serial.print(h);
-  Serial.print(F("%  Temperature: "));
-  Serial.print(t);
-  Serial.println(F("°C "));
+    if (isnan(h) || isnan(t) || isnan(f))
+    {
+      Serial.println(F("Failed to read from DHT sensor!"));
+      delay(500);
+      count++;
+    }
+    else
+    {
+      Serial.print(F("Humidity: "));
+      Serial.print(h);
+      Serial.print(F("%  Temperature: "));
+      Serial.print(t);
+      Serial.println(F("°C "));
+
+      mqttClient.publish("v1/devices/me/telemetry", ("{\"humidity\":" + String(h) + ",\"temperature\":" + String(t) + "}").c_str());
+      break;
+    }
+  }
 }
 
 void readSoilMoisture()
@@ -92,15 +96,43 @@ void readSoilMoisture()
   // https://makersportal.com/blog/2020/5/26/capacitive-soil-moisture-calibration-with-arduino manual coefficients
   float voltage = (float(analogRead(SOIL_MOISTURE_PIN)) / 4095.0) * 3.3;
   float moisture = (1.0 / voltage) * 1.50 - 0.54;
+  if (moisture < 0)
+    moisture = 0;
   Serial.print(F("Soil moisture "));
   Serial.print(moisture);
   Serial.println(F("cm³/cm³"));
+
+  mqttClient.publish("v1/devices/me/telemetry", ("{\"moisture\":" + String(moisture) + "}").c_str());
+}
+
+void readLight()
+{
+  float light = (float(analogRead(LIGHT_PIN)) / 4095.0);
+  if (light > 0)
+    light = 1 / light;
+  Serial.print(F("Light level "));
+  Serial.println(light);
+
+  mqttClient.publish("v1/devices/me/telemetry", ("{\"light\":" + String(light) + "}").c_str());
+}
+
+void setup()
+{
+  Serial.begin(9600);
+  setup_wifi();
+  mqttClient.setServer(mqtt_server, 1883);
+  setup_mqtt();
+  dht.begin();
+
+  // esp_sleep_enable_timer_wakeup(10 * 60 * 1000000); // 10min
+  // Serial.flush();
+  // esp_deep_sleep_start();
 }
 
 void loop()
 {
-  mqttClient.publish("v1/devices/me/telemetry", "{\"humidity\":0}");
-  readDht();
   readSoilMoisture();
-  delay(5000);
+  readLight();
+  readDht();
+  delay(10 * 60 * 1000);
 }
